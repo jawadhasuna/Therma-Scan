@@ -1,8 +1,8 @@
-# ThermaScan
+# Therma Scan
 
 **Thermal image analyser that runs entirely in your browser.**
 
-### 🔗 Live site: <https://therma-scan.vercel.app>
+### 🔗 Live site: <https://thermascans.vercel.app>
 
 Upload a thermal (FLIR) image, tell it a couple of temperatures you already know,
 and it works out the temperature across the whole picture — then finds the hot spots.
@@ -32,7 +32,7 @@ No server, no upload, no account. Your images never leave your device.
 
 Honest answer: **good for comparing, not for certifying.**
 
-ThermaScan reads the *brightness* of each pixel, not true sensor readings. A thermal
+Therma Scan reads the *brightness* of each pixel, not true sensor readings. A thermal
 camera auto-adjusts its brightness range for every shot, so brightness is related to
 temperature but isn't a fixed scale.
 
