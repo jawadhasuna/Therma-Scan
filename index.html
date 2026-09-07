@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ThermaScan — Thermal Image Analyser</title>
+<meta name="description" content="Upload a thermal image, calibrate it with known temperatures, and find hot spots. Runs entirely in your browser.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  :root{
+    --bg:#0d0e12; --panel:#15171e; --panel-2:#1c1f28; --line:#282c38;
+    --text:#e8eaf0; --muted:#8b91a3; --dim:#5d6478;
+    --hot:#ff6b35; --hot-2:#ffa726; --cold:#4fc3f7; --ok:#66bb6a;
+    --radius:10px;
+    --font:'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;
+    --mono:'SF Mono',Consolas,'Roboto Mono',monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.5}
+  h1,h2,h3{margin:0;font-weight:600}
+  button{font-family:inherit;font-size:inherit;cursor:pointer}
+
+  /* ---------- header ---------- */
+  header{
+    display:flex;align-items:center;gap:14px;
+    padding:14px 22px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#171921,#121419);
+    position:sticky;top:0;z-index:50;
+  }
+  .brand{display:flex;align-items:center;gap:11px}
+  .brand svg{display:block}
+  .brand-name{font-size:17px;font-weight:700;letter-spacing:-.02em}
+  .brand-name span{color:var(--hot)}
+  .tagline{color:var(--dim);font-size:12.5px;border-left:1px solid var(--line);padding-left:14px}
+  header .spacer{flex:1}
+  .ghlink{color:var(--muted);text-decoration:none;font-size:12.5px;display:flex;align-items:center;gap:6px;
+          padding:6px 11px;border:1px solid var(--line);border-radius:7px;transition:.15s}
+  .ghlink:hover{color:var(--text);border-color:var(--dim)}
+
+  /* ---------- layout ---------- */
+  .wrap{display:grid;grid-template-columns:320px 1fr;gap:18px;padding:18px 22px;max-width:1600px;margin:0 auto;align-items:start}
+  @media(max-width:960px){.wrap{grid-template-columns:1fr}}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .panel-head{padding:11px 15px;border-bottom:1px solid var(--line);background:var(--panel-2);
+              font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .panel-body{padding:15px}
+  .stack > * + *{margin-top:14px}
+
+  /* ---------- controls ---------- */
+  label.field{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+  input[type=text],input[type=number],select{
+    width:100%;padding:8px 10px;background:#0f1116;border:1px solid var(--line);
+    border-radius:7px;color:var(--text);font-family:inherit;font-size:13px;outline:none;transition:.15s}
+  input:focus,select:focus{border-color:var(--hot)}
+  input[type=range]{width:100%;accent-color:var(--hot);cursor:pointer}
+
+  .btn{display:block;width:100%;padding:9px 14px;border-radius:7px;border:1px solid var(--line);
+       background:var(--panel-2);color:var(--text);font-weight:500;transition:.15s;text-align:center}
+  .btn:hover:not(:disabled){background:#242833;border-color:var(--dim)}
+  .btn:disabled{opacity:.38;cursor:not-allowed}
+  .btn-primary{background:linear-gradient(180deg,var(--hot),#e8551f);border-color:#ff7f4d;color:#fff;font-weight:600}
+  .btn-primary:hover:not(:disabled){background:linear-gradient(180deg,#ff7d4d,var(--hot))}
+  .btn-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .btn-row .btn{width:auto}
+
+  /* ---------- dropzone ---------- */
+  #drop{border:1.5px dashed var(--line);border-radius:var(--radius);padding:24px 16px;text-align:center;
+        cursor:pointer;transition:.18s;background:#101218}
+  #drop:hover,#drop.over{border-color:var(--hot);background:#17141a}
+  #drop .icon{font-size:26px;margin-bottom:8px;opacity:.75}
+  #drop .t{font-weight:600;margin-bottom:3px}
+  #drop .s{color:var(--dim);font-size:12px}
+
+  /* ---------- calibration list ---------- */
+  .cal-list{max-height:150px;overflow-y:auto;border:1px solid var(--line);border-radius:7px;background:#0f1116}
+  .cal-item{display:flex;align-items:center;gap:9px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:12.5px}
+  .cal-item:last-child{border-bottom:none}
+  .cal-dot{width:9px;height:9px;border-radius:50%;background:var(--hot);flex-shrink:0}
+  .cal-item .coord{color:var(--dim);font-family:var(--mono);font-size:11px}
+  .cal-item .temp{margin-left:auto;font-weight:600;font-family:var(--mono)}
+  .cal-item .del{background:none;border:none;color:var(--dim);padding:0 2px;font-size:15px;line-height:1}
+  .cal-item .del:hover{color:var(--hot)}
+  .empty{padding:14px;text-align:center;color:var(--dim);font-size:12px}
+
+  /* ---------- canvas ---------- */
+  .tabs{display:flex;gap:2px;padding:8px 8px 0;background:var(--panel-2);border-bottom:1px solid var(--line)}
+  .tab{padding:8px 15px;border:none;background:none;color:var(--muted);font-size:13px;font-weight:500;
+       border-radius:7px 7px 0 0;border-bottom:2px solid transparent;transition:.15s}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--hot);border-bottom-color:var(--hot);background:var(--panel)}
+  .tab:disabled{opacity:.35;cursor:not-allowed}
+
+  .stage{position:relative;background:#08090c;min-height:400px;display:flex;align-items:center;justify-content:center;padding:16px}
+  #view{max-width:100%;max-height:66vh;border-radius:6px;display:block;image-rendering:auto}
+  #view.picking{cursor:crosshair}
+  .stage-hint{color:var(--dim);text-align:center;padding:50px 20px;font-size:13.5px;line-height:1.8}
+  .stage-hint .big{font-size:40px;opacity:.3;display:block;margin-bottom:12px}
+
+  .scalebar{display:flex;align-items:center;gap:11px;padding:11px 16px;border-top:1px solid var(--line);
+            background:var(--panel-2);font-size:12px;font-family:var(--mono)}
+  .scalebar .grad{flex:1;height:13px;border-radius:3px;border:1px solid var(--line)}
+
+  /* ---------- stats ---------- */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:9px}
+  .stat{background:#0f1116;border:1px solid var(--line);border-radius:7px;padding:10px 11px}
+  .stat .k{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+  .stat .v{font-size:17px;font-weight:700;font-family:var(--mono)}
+
+  .spot{display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid var(--line);font-size:12.5px}
+  .spot:last-child{border-bottom:none}
+  .spot .rank{width:19px;height:19px;border-radius:5px;display:grid;place-items:center;
+              font-size:10.5px;font-weight:700;color:#0d0e12;flex-shrink:0}
+  .spot .coord{color:var(--dim);font-family:var(--mono);font-size:11px}
+  .spot .temp{margin-left:auto;font-weight:600;font-family:var(--mono)}
+
+  .note{background:#16130f;border:1px solid #3a2a18;border-left:3px solid var(--hot-2);
+        border-radius:6px;padding:10px 12px;font-size:12px;color:#c9b99f;line-height:1.6}
+  .note b{color:var(--hot-2)}
+  .hint{color:var(--dim);font-size:11.5px;line-height:1.55}
+
+  footer{border-top:1px solid var(--line);padding:22px;text-align:center;color:var(--dim);font-size:12px}
+  footer a{color:var(--muted);text-decoration:none}
+  footer a:hover{color:var(--hot)}
+
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(80px);
+         background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:11px 18px;
+         font-size:13px;opacity:0;transition:.25s;z-index:100;pointer-events:none;box-shadow:0 8px 28px #0009}
+  .toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-track{background:#0f1116}
+  ::-webkit-scrollbar-thumb{background:#2c313f;border-radius:5px}
+  ::-webkit-scrollbar-thumb:hover{background:#3a4152}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <circle cx="16" cy="16" r="14" stroke="#282c38" stroke-width="1.5"/>
+      <circle cx="16" cy="16" r="10.5" fill="#3d1a0f"/>
+      <circle cx="16" cy="16" r="7.5" fill="#8c2f10"/>
+      <circle cx="16" cy="16" r="4.8" fill="#ff6b35"/>
+      <circle cx="16" cy="16" r="2.2" fill="#ffd166"/>
+    </svg>
+    <div class="brand-name">Therma<span>Scan</span></div>
+  </div>
+  <div class="tagline">Thermal image analyser</div>
+  <div class="spacer"></div>
+  <a class="ghlink" href="https://github.com/jawadhasuna/Therma-Scan" target="_blank" rel="noopener">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+    GitHub
+  </a>
+</header>
+
+<div class="wrap">
+
+  <!-- ================= SIDEBAR ================= -->
+  <div class="stack">
+
+    <div class="panel">
+      <div class="panel-head">1 · Load image</div>
+      <div class="panel-body stack">
+        <div id="drop">
+          <div class="icon">🌡️</div>
+          <div class="t">Drop a thermal image</div>
+          <div class="s">or click to browse</div>
+        </div>
+        <input type="file" id="file" accept="image/*" hidden>
+        <button class="btn" id="sample">Try a sample image</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">2 · Calibrate</div>
+      <div class="panel-body stack">
+        <div class="hint">
+          Type a temperature you know, then click that exact spot on the image.
+          Add at least <b>2 points</b> — 3 or more is more accurate.
+        </div>
+        <div>
+          <label class="field" for="temp">Temperature at next click (°C)</label>
+          <input type="number" id="temp" value="25" step="0.1">
+        </div>
+        <div class="cal-list" id="calList">
+          <div class="empty">No calibration points yet</div>
+        </div>
+        <button class="btn" id="clearCal" disabled>Clear all points</button>
+        <button class="btn btn-primary" id="build" disabled>Build temperature map</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">3 · Analyse</div>
+      <div class="panel-body stack">
+        <div>
+          <label class="field">Hot spots — top <b id="hotPctL">5</b>% of pixels</label>
+          <input type="range" id="hotPct" min="1" max="20" value="5">
+        </div>
+        <div>
+          <label class="field">Cold spots — bottom <b id="coldPctL">5</b>% of pixels</label>
+          <input type="range" id="coldPct" min="1" max="20" value="5">
+        </div>
+        <div>
+          <label class="field" for="palette">Colour palette</label>
+          <select id="palette">
+            <option value="inferno">Inferno (recommended)</option>
+            <option value="jet">Jet (classic FLIR)</option>
+            <option value="ironbow">Ironbow</option>
+            <option value="gray">Greyscale</option>
+          </select>
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="dlPng" disabled>Save PNG</button>
+          <button class="btn" id="dlCsv" disabled>Export CSV</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="note">
+      <b>How accurate is this?</b> ThermaScan reads pixel <i>brightness</i>, not true sensor
+      data. It is reliable for <b>comparing</b> areas in one image, and for spotting problems.
+      For certified readings use the radiometric data inside the original FLIR file.
+    </div>
+
+  </div>
+
+  <!-- ================= MAIN ================= -->
+  <div class="stack">
+
+    <div class="panel">
+      <div class="tabs">
+        <button class="tab active" data-view="original">Original</button>
+        <button class="tab" data-view="thermal" disabled>Temperature map</button>
+        <button class="tab" data-view="hot" disabled>Hot spots</button>
+        <button class="tab" data-view="cold" disabled>Cold spots</button>
+      </div>
+      <div class="stage" id="stage">
+        <div class="stage-hint" id="hint">
+          <span class="big">🔥</span>
+          Load a thermal image to begin.<br>
+          Everything runs on your own device — no upload, no account.
+        </div>
+        <canvas id="view" hidden></canvas>
+      </div>
+      <div class="scalebar" id="scale" hidden>
+        <span id="scaleMin">—</span>
+        <div class="grad" id="grad"></div>
+        <span id="scaleMax">—</span>
+      </div>
+    </div>
+
+    <div class="panel" id="statsPanel" hidden>
+      <div class="panel-head">Results</div>
+      <div class="panel-body stack">
+        <div class="stats">
+          <div class="stat"><div class="k">Minimum</div><div class="v" id="sMin">—</div></div>
+          <div class="stat"><div class="k">Maximum</div><div class="v" id="sMax">—</div></div>
+          <div class="stat"><div class="k">Average</div><div class="v" id="sMean">—</div></div>
+          <div class="stat"><div class="k">Range</div><div class="v" id="sRange">—</div></div>
+          <div class="stat"><div class="k">Hot above</div><div class="v" id="sHot">—</div></div>
+          <div class="stat"><div class="k">Cold below</div><div class="v" id="sCold">—</div></div>
+        </div>
+        <div>
+          <div class="panel-head" style="border:1px solid var(--line);border-radius:7px 7px 0 0">Largest hot regions</div>
+          <div style="border:1px solid var(--line);border-top:none;border-radius:0 0 7px 7px;background:#0f1116" id="spots">
+            <div class="empty">Build a temperature map to see hot regions</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<footer>
+  ThermaScan · built by <a href="https://github.com/jawadhasuna" target="_blank" rel="noopener">jawadhasuna</a>
+  · runs entirely in your browser
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+'use strict';
+
+// ══════════════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════════════
+const S = {
+  img: null,          // HTMLImageElement / ImageBitmap
+  w: 0, h: 0,         // working resolution
+  gray: null,         // Float32Array, normalised 0..1
+  temps: null,        // Float32Array, °C  (null until built)
+  points: [],         // {x, y, t}
+  view: 'original',
+  min: 0, max: 0, mean: 0,
+  hotT: 0, coldT: 0,
+  regions: []
+};
+
+const MAX_DIM = 1100;   // cap working resolution so the maths stays fast
+
+const $ = id => document.getElementById(id);
+const view = $('view'), ctx = view.getContext('2d', { willReadFrequently: true });
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  COLOUR PALETTES
+//  Each is a list of RGB stops; we interpolate between them.
+// ══════════════════════════════════════════════════════════════
+const PALETTES = {
+  inferno: [[0,0,4],[22,11,57],[66,10,104],[106,23,110],[147,38,103],
+            [188,55,84],[216,82,56],[237,121,26],[251,164,10],[252,211,60],[252,255,164]],
+  jet:     [[0,0,131],[0,60,170],[5,255,255],[255,255,0],[250,0,0],[128,0,0]],
+  ironbow: [[0,0,40],[45,0,110],[125,0,130],[190,30,90],[235,90,30],[255,160,0],[255,230,120],[255,255,255]],
+  gray:    [[0,0,0],[255,255,255]]
+};
+
+function paletteColor(v, name) {
+  const stops = PALETTES[name] || PALETTES.inferno;
+  v = v < 0 ? 0 : v > 1 ? 1 : v;
+  const f = v * (stops.length - 1);
+  const i = Math.min(Math.floor(f), stops.length - 2);
+  const k = f - i;
+  const a = stops[i], b = stops[i + 1];
+  return [
+    a[0] + (b[0] - a[0]) * k,
+    a[1] + (b[1] - a[1]) * k,
+    a[2] + (b[2] - a[2]) * k
+  ];
+}
+
+function paletteCss(name) {
+  const stops = PALETTES[name] || PALETTES.inferno;
+  return 'linear-gradient(to right,' +
+    stops.map((c, i) => `rgb(${c[0]},${c[1]},${c[2]}) ${(i / (stops.length - 1) * 100).toFixed(1)}%`).join(',') + ')';
+}
+
+// ══════════════════════════════════════════════════════════════
+//  MATHS  —  least-squares polynomial fit
+//  Mirrors numpy.polyfit from the original Python version.
+// ══════════════════════════════════════════════════════════════
+function polyfit(xs, ys, degree) {
+  const n = xs.length, m = degree + 1;
+  // Normal equations: (A^T A) c = A^T y  where A is the Vandermonde matrix
+  const ata = Array.from({ length: m }, () => new Float64Array(m + 1));
+  for (let r = 0; r < m; r++) {
+    for (let c = 0; c < m; c++) {
+      let s = 0;
+      for (let i = 0; i < n; i++) s += Math.pow(xs[i], r + c);
+      ata[r][c] = s;
+    }
+    let s = 0;
+    for (let i = 0; i < n; i++) s += ys[i] * Math.pow(xs[i], r);
+    ata[r][m] = s;
+  }
+  // Gaussian elimination with partial pivoting
+  for (let i = 0; i < m; i++) {
+    let piv = i;
+    for (let r = i + 1; r < m; r++) if (Math.abs(ata[r][i]) > Math.abs(ata[piv][i])) piv = r;
+    [ata[i], ata[piv]] = [ata[piv], ata[i]];
+    if (Math.abs(ata[i][i]) < 1e-12) continue;          // singular — skip
+    for (let r = i + 1; r < m; r++) {
+      const f = ata[r][i] / ata[i][i];
+      for (let c = i; c <= m; c++) ata[r][c] -= f * ata[i][c];
+    }
+  }
+  // Back-substitution
+  const co = new Float64Array(m);
+  for (let i = m - 1; i >= 0; i--) {
+    let s = ata[i][m];
+    for (let c = i + 1; c < m; c++) s -= ata[i][c] * co[c];
+    co[i] = Math.abs(ata[i][i]) < 1e-12 ? 0 : s / ata[i][i];
+  }
+  return co;   // co[0] + co[1]*x + co[2]*x^2 ...
+}
+
+const polyval = (co, x) => { let s = 0, p = 1; for (let i = 0; i < co.length; i++) { s += co[i] * p; p *= x; } return s; };
+
+function percentile(arr, p) {
+  const s = Float32Array.from(arr).sort();
+  const i = (p / 100) * (s.length - 1);
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  IMAGE LOADING
+// ══════════════════════════════════════════════════════════════
+async function loadImage(src) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = src; });
+
+  // Downscale large photos so the per-pixel maths stays snappy
+  const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+  S.w = Math.max(1, Math.round(img.width * scale));
+  S.h = Math.max(1, Math.round(img.height * scale));
+
+  const off = document.createElement('canvas');
+  off.width = S.w; off.height = S.h;
+  const octx = off.getContext('2d', { willReadFrequently: true });
+  octx.drawImage(img, 0, 0, S.w, S.h);
+
+  const data = octx.getImageData(0, 0, S.w, S.h).data;
+
+  // Convert to perceptual luminance, then normalise to 0..1
+  const g = new Float32Array(S.w * S.h);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const l = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    g[p] = l;
+    if (l < lo) lo = l;
+    if (l > hi) hi = l;
+  }
+  const span = (hi - lo) || 1;
+  for (let p = 0; p < g.length; p++) g[p] = (g[p] - lo) / span;
+
+  S.img = img; S.gray = g;
+  S.temps = null; S.points = []; S.regions = [];
+
+  view.width = S.w; view.height = S.h;
+  view.hidden = false;
+  $('hint').hidden = true;
+
+  setView('original');
+  refreshCalList();
+  updateButtons();
+  toast(`Loaded ${img.width} × ${img.height} px`);
+}
+
+// A procedurally drawn "circuit board" so visitors can try the tool
+// without owning a thermal camera.
+function sampleImage() {
+  const c = document.createElement('canvas');
+  c.width = 640; c.height = 440;
+  const x = c.getContext('2d');
+
+  x.fillStyle = '#1e1e1e'; x.fillRect(0, 0, 640, 440);
+
+  // faint board texture
+  x.strokeStyle = '#2a2a2a'; x.lineWidth = 2;
+  for (let i = 0; i < 14; i++) {
+    x.beginPath();
+    x.moveTo(40 + i * 42, 40); x.lineTo(40 + i * 42, 400);
+    x.stroke();
+  }
+
+  const blob = (cx, cy, r, peak) => {
+    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, `rgba(255,255,255,${peak})`);
+    g.addColorStop(0.35, `rgba(210,210,210,${peak * 0.6})`);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g;
+    x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fill();
+  };
+
+  x.globalCompositeOperation = 'lighter';
+  blob(196, 154, 108, 1.00);   // the failing component — hottest
+  blob(432, 250, 88, 0.66);    // a warm regulator
+  blob(320, 356, 66, 0.40);    // mild warmth
+  blob(540, 118, 52, 0.26);
+  blob(96,  330, 44, 0.20);
+  x.globalCompositeOperation = 'source-over';
+
+  loadImage(c.toDataURL('image/png')).then(() => {
+    // Pre-seed two believable calibration points so it works out of the box
+    S.points = [
+      { x: 196, y: 154, t: 84.0 },   // hot component
+      { x: 40,  y: 415, t: 22.0 }    // cool board corner
+    ].filter(p => p.x < S.w && p.y < S.h);
+    refreshCalList(); updateButtons(); draw();
+    toast('Sample loaded with 2 calibration points — press "Build temperature map"');
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  TEMPERATURE MAP
+// ══════════════════════════════════════════════════════════════
+function buildMap() {
+  if (S.points.length < 2) { toast('Add at least 2 calibration points'); return; }
+
+  const xs = S.points.map(p => S.gray[p.y * S.w + p.x]);
+  const ys = S.points.map(p => p.t);
+  const degree = Math.min(2, S.points.length - 1);
+  const co = polyfit(xs, ys, degree);
+
+  const t = new Float32Array(S.gray.length);
+  let lo = Infinity, hi = -Infinity, sum = 0;
+  for (let i = 0; i < t.length; i++) {
+    const v = polyval(co, S.gray[i]);
+    t[i] = v; sum += v;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  S.temps = t; S.min = lo; S.max = hi; S.mean = sum / t.length;
+
+  recomputeThresholds();
+  ['thermal', 'hot', 'cold'].forEach(v =>
+    document.querySelector(`.tab[data-view="${v}"]`).disabled = false);
+  setView('thermal');
+  $('statsPanel').hidden = false;
+  $('scale').hidden = false;
+  updateButtons();
+  toast(`Map built · ${lo.toFixed(1)}°C to ${hi.toFixed(1)}°C`);
+}
+
+function recomputeThresholds() {
+  if (!S.temps) return;
+  // Sample for speed on large images — percentile of a random subset is
+  // statistically fine and much faster than sorting millions of values.
+  const step = Math.max(1, Math.floor(S.temps.length / 120000));
+  const sub = [];
+  for (let i = 0; i < S.temps.length; i += step) sub.push(S.temps[i]);
+
+  S.hotT  = percentile(sub, 100 - (+$('hotPct').value));
+  S.coldT = percentile(sub, +$('coldPct').value);
+
+  findRegions();
+  updateStats();
+}
+
+// Flood-fill the hot mask to find distinct hot regions, biggest first.
+function findRegions() {
+  const { w, h, temps } = S;
+  const seen = new Uint8Array(w * h);
+  const out = [];
+  const stack = new Int32Array(w * h);
+
+  for (let i = 0; i < temps.length; i++) {
+    if (seen[i] || temps[i] < S.hotT) continue;
+    let sp = 0, count = 0, sx = 0, sy = 0, peak = -Infinity, px = 0, py = 0;
+    stack[sp++] = i; seen[i] = 1;
+
+    while (sp > 0) {
+      const p = stack[--sp];
+      const x = p % w, y = (p / w) | 0;
+      count++; sx += x; sy += y;
+      if (temps[p] > peak) { peak = temps[p]; px = x; py = y; }
+
+      if (x > 0     && !seen[p - 1] && temps[p - 1] >= S.hotT) { seen[p - 1] = 1; stack[sp++] = p - 1; }
+      if (x < w - 1 && !seen[p + 1] && temps[p + 1] >= S.hotT) { seen[p + 1] = 1; stack[sp++] = p + 1; }
+      if (y > 0     && !seen[p - w] && temps[p - w] >= S.hotT) { seen[p - w] = 1; stack[sp++] = p - w; }
+      if (y < h - 1 && !seen[p + w] && temps[p + w] >= S.hotT) { seen[p + w] = 1; stack[sp++] = p + w; }
+    }
+    if (count >= 25) out.push({ count, cx: sx / count | 0, cy: sy / count | 0, peak, px, py });
+  }
+  out.sort((a, b) => b.peak - a.peak);
+  S.regions = out.slice(0, 6);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  RENDERING
+// ══════════════════════════════════════════════════════════════
+function draw() {
+  if (!S.gray) return;
+  const { w, h } = S;
+  const im = ctx.createImageData(w, h);
+  const d = im.data;
+  const pal = $('palette').value;
+
+  if (S.view === 'original' || !S.temps) {
+    for (let i = 0, p = 0; p < S.gray.length; p++, i += 4) {
+      const v = S.gray[p] * 255;
+      d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+    }
+  } else {
+    const span = (S.max - S.min) || 1;
+    for (let i = 0, p = 0; p < S.temps.length; p++, i += 4) {
+      const norm = (S.temps[p] - S.min) / span;
+      let [r, g, b] = paletteColor(norm, pal);
+
+      if (S.view === 'hot') {
+        // Dim everything that isn't a hot spot, tint what is
+        if (S.temps[p] >= S.hotT) { r = 255; g = 70 + norm * 90; b = 40; }
+        else { const l = S.gray[p] * 105; r = l; g = l; b = l; }
+      } else if (S.view === 'cold') {
+        if (S.temps[p] <= S.coldT) { r = 60; g = 150 + (1 - norm) * 60; b = 255; }
+        else { const l = S.gray[p] * 105; r = l; g = l; b = l; }
+      }
+      d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(im, 0, 0);
+
+  drawCalMarkers();
+  if (S.view === 'hot') drawRegionMarkers();
+
+  $('grad').style.background = paletteCss(pal);
+  if (S.temps) {
+    $('scaleMin').textContent = S.min.toFixed(1) + '°C';
+    $('scaleMax').textContent = S.max.toFixed(1) + '°C';
+  }
+}
+
+function drawCalMarkers() {
+  const r = Math.max(5, S.w / 130);
+  ctx.lineWidth = Math.max(1.5, S.w / 500);
+  ctx.font = `600 ${Math.max(11, S.w / 62)}px ${getComputedStyle(document.body).fontFamily}`;
+  ctx.textBaseline = 'middle';
+
+  S.points.forEach((p, i) => {
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = '#fff'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.42, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff'; ctx.fill();
+
+    const label = `${p.t}°C`;
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(0,0,0,.72)';
+    ctx.fillRect(p.x + r + 3, p.y - r, tw + 9, r * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, p.x + r + 7, p.y + 1);
+  });
+}
+
+function drawRegionMarkers() {
+  ctx.lineWidth = Math.max(1.5, S.w / 550);
+  ctx.font = `700 ${Math.max(11, S.w / 68)}px ${getComputedStyle(document.body).fontFamily}`;
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+  const r = Math.max(9, S.w / 78);
+
+  S.regions.forEach((g, i) => {
+    ctx.beginPath(); ctx.arc(g.px, g.py, r, 0, Math.PI * 2);
+    ctx.strokeStyle = '#fff'; ctx.stroke();
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(String(i + 1), g.px, g.py + 1);
+  });
+  ctx.textAlign = 'left';
+}
+
+// ══════════════════════════════════════════════════════════════
+//  UI WIRING
+// ══════════════════════════════════════════════════════════════
+function setView(v) {
+  S.view = v;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === v));
+  view.classList.toggle('picking', true);
+  draw();
+}
+
+function refreshCalList() {
+  const el = $('calList');
+  if (!S.points.length) { el.innerHTML = '<div class="empty">No calibration points yet</div>'; return; }
+  el.innerHTML = S.points.map((p, i) => `
+    <div class="cal-item">
+      <div class="cal-dot"></div>
+      <span class="coord">${p.x}, ${p.y}</span>
+      <span class="temp">${p.t}°C</span>
+      <button class="del" data-i="${i}" title="Remove">×</button>
+    </div>`).join('');
+  el.querySelectorAll('.del').forEach(b => b.onclick = () => {
+    S.points.splice(+b.dataset.i, 1);
+    refreshCalList(); updateButtons(); draw();
+  });
+}
+
+function updateStats() {
+  $('sMin').textContent   = S.min.toFixed(1) + '°';
+  $('sMax').textContent   = S.max.toFixed(1) + '°';
+  $('sMean').textContent  = S.mean.toFixed(1) + '°';
+  $('sRange').textContent = (S.max - S.min).toFixed(1) + '°';
+  $('sHot').textContent   = S.hotT.toFixed(1) + '°';
+  $('sCold').textContent  = S.coldT.toFixed(1) + '°';
+
+  const el = $('spots');
+  if (!S.regions.length) { el.innerHTML = '<div class="empty">No distinct hot regions found</div>'; return; }
+  const span = (S.max - S.min) || 1;
+  el.innerHTML = S.regions.map((g, i) => {
+    const c = paletteColor((g.peak - S.min) / span, $('palette').value).map(Math.round);
+    return `<div class="spot">
+      <div class="rank" style="background:rgb(${c[0]},${c[1]},${c[2]})">${i + 1}</div>
+      <span class="coord">at ${g.px}, ${g.py}</span>
+      <span style="color:var(--dim)">${g.count.toLocaleString()} px</span>
+      <span class="temp">${g.peak.toFixed(1)}°C</span>
+    </div>`;
+  }).join('');
+}
+
+function updateButtons() {
+  const has = !!S.gray, built = !!S.temps;
+  $('build').disabled    = S.points.length < 2;
+  $('clearCal').disabled = !S.points.length;
+  $('dlPng').disabled    = !has;
+  $('dlCsv').disabled    = !built;
+}
+
+// ---- canvas clicks add calibration points ----
+view.addEventListener('click', e => {
+  if (!S.gray) return;
+  const r = view.getBoundingClientRect();
+  const x = Math.round((e.clientX - r.left) * (S.w / r.width));
+  const y = Math.round((e.clientY - r.top)  * (S.h / r.height));
+  if (x < 0 || y < 0 || x >= S.w || y >= S.h) return;
+
+  const t = parseFloat($('temp').value);
+  if (!isFinite(t)) { toast('Enter a temperature first'); $('temp').focus(); return; }
+
+  S.points.push({ x, y, t });
+  refreshCalList(); updateButtons(); draw();
+  $('temp').select();
+  toast(`Point ${S.points.length} added at ${t}°C`);
+});
+
+// ---- file input + drag & drop ----
+$('drop').onclick = () => $('file').click();
+$('file').onchange = e => { const f = e.target.files[0]; if (f) readFile(f); };
+
+function readFile(f) {
+  if (!f.type.startsWith('image/')) { toast('That is not an image file'); return; }
+  const fr = new FileReader();
+  fr.onload = () => loadImage(fr.result);
+  fr.readAsDataURL(f);
+}
+
+['dragenter', 'dragover'].forEach(ev =>
+  $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev =>
+  $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+$('drop').addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+
+// ---- buttons & sliders ----
+$('sample').onclick   = sampleImage;
+$('build').onclick    = buildMap;
+$('clearCal').onclick = () => { S.points = []; refreshCalList(); updateButtons(); draw(); };
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => { if (!t.disabled) setView(t.dataset.view); });
+
+$('hotPct').oninput  = () => { $('hotPctL').textContent  = $('hotPct').value;  recomputeThresholds(); draw(); };
+$('coldPct').oninput = () => { $('coldPctL').textContent = $('coldPct').value; recomputeThresholds(); draw(); };
+$('palette').onchange = () => { draw(); if (S.temps) updateStats(); };
+
+$('dlPng').onclick = () => {
+  const a = document.createElement('a');
+  a.download = `thermascan-${S.view}.png`;
+  a.href = view.toDataURL('image/png');
+  a.click();
+  toast('PNG saved');
+};
+
+$('dlCsv').onclick = () => {
+  // Summary first, then a downsampled temperature grid so the file stays openable in Excel.
+  const step = Math.max(1, Math.ceil(Math.max(S.w, S.h) / 300));
+  const lines = [
+    '# ThermaScan temperature export',
+    `# resolution,${S.w},${S.h}`,
+    `# sampled_every,${step},px`,
+    `# min_c,${S.min.toFixed(2)}`,
+    `# max_c,${S.max.toFixed(2)}`,
+    `# mean_c,${S.mean.toFixed(2)}`,
+    `# hot_threshold_c,${S.hotT.toFixed(2)}`,
+    `# cold_threshold_c,${S.coldT.toFixed(2)}`,
+    '#',
+    '# calibration points (x,y,celsius)',
+    ...S.points.map(p => `# point,${p.x},${p.y},${p.t}`),
+    '#',
+    '# hot regions (rank,x,y,pixels,peak_celsius)',
+    ...S.regions.map((g, i) => `# region,${i + 1},${g.px},${g.py},${g.count},${g.peak.toFixed(2)}`),
+    '#',
+    'x,y,celsius'
+  ];
+  for (let y = 0; y < S.h; y += step)
+    for (let x = 0; x < S.w; x += step)
+      lines.push(`${x},${y},${S.temps[y * S.w + x].toFixed(2)}`);
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.download = 'thermascan-data.csv';
+  a.href = URL.createObjectURL(blob);
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast(`CSV exported (${lines.length.toLocaleString()} rows)`);
+};
+
+$('grad').style.background = paletteCss('inferno');
+})();
+</script>
+</body>
+</html>
