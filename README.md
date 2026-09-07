@@ -2,6 +2,8 @@
 
 **Thermal image analyser that runs entirely in your browser.**
 
+### 🔗 Live site: <https://therma-scan.vercel.app>
+
 Upload a thermal (FLIR) image, tell it a couple of temperatures you already know,
 and it works out the temperature across the whole picture — then finds the hot spots.
 

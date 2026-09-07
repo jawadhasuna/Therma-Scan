@@ -16,6 +16,8 @@
     --mono:'SF Mono',Consolas,'Roboto Mono',monospace;
   }
   *{box-sizing:border-box}
+  /* a class or id rule can out-rank the browser default for [hidden]; make it stick */
+  [hidden]{display:none!important}
   body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.5}
   h1,h2,h3{margin:0;font-weight:600}
   button{font-family:inherit;font-size:inherit;cursor:pointer}
