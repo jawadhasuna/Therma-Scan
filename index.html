@@ -70,6 +70,17 @@
   #drop .t{font-weight:600;margin-bottom:3px}
   #drop .s{color:var(--dim);font-size:12px}
 
+  /* ---------- built-in sample gallery ---------- */
+  .samples{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .sample{padding:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;
+          background:#0f1116;cursor:grab;transition:.15s;text-align:left;display:block;
+          font-family:inherit;color:inherit}
+  .sample:hover{border-color:var(--hot);transform:translateY(-1px)}
+  .sample:active{cursor:grabbing;transform:none}
+  .sample canvas{display:block;width:100%;height:auto;border-bottom:1px solid var(--line)}
+  .sample .cap{padding:6px 8px 0;font-size:11.5px;font-weight:600}
+  .sample .sub{padding:1px 8px 7px;font-size:10.5px;color:var(--dim);line-height:1.35}
+
   /* ---------- calibration list ---------- */
   .cal-list{max-height:150px;overflow-y:auto;border:1px solid var(--line);border-radius:7px;background:#0f1116}
   .cal-item{display:flex;align-items:center;gap:9px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:12.5px}
@@ -157,7 +168,11 @@
           <div class="s">or click to browse</div>
         </div>
         <input type="file" id="file" accept="image/*" hidden>
-        <button class="btn" id="sample">Try a sample image</button>
+        <div>
+          <label class="field">No thermal photo? Use a built-in one —
+            click it, or drag it onto the box above.</label>
+          <div class="samples" id="samples"></div>
+        </div>
       </div>
     </div>
 
@@ -423,49 +438,165 @@ async function loadImage(src) {
   toast(`Loaded ${img.width} × ${img.height} px`);
 }
 
-// A procedurally drawn "circuit board" so visitors can try the tool
-// without owning a thermal camera.
-function sampleImage() {
-  const c = document.createElement('canvas');
-  c.width = 640; c.height = 440;
-  const x = c.getContext('2d');
+// ══════════════════════════════════════════════════════════════
+//  BUILT-IN SAMPLES
+//  Thermal scenes drawn from scratch, so anyone can try the tool
+//  without owning a thermal camera. Brighter = hotter, exactly as a
+//  raw thermal frame comes off the sensor. Each ships with two
+//  believable calibration points so it works the moment it loads.
+// ══════════════════════════════════════════════════════════════
+const SW = 640, SH = 440;
+const SAMPLE_MIME = 'text/x-thermascan-sample';   // marks a drag that came from the gallery
 
-  x.fillStyle = '#1e1e1e'; x.fillRect(0, 0, 640, 440);
+// A soft radial heat source, added on top of whatever is beneath it.
+function heat(x, cx, cy, r, peak) {
+  const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+  g.addColorStop(0,    `rgba(255,255,255,${peak})`);
+  g.addColorStop(0.35, `rgba(210,210,210,${peak * 0.6})`);
+  g.addColorStop(1,    'rgba(255,255,255,0)');
+  x.fillStyle = g;
+  x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fill();
+}
+const additive = (x, fn) => {
+  x.globalCompositeOperation = 'lighter'; fn(); x.globalCompositeOperation = 'source-over';
+};
 
-  // faint board texture
-  x.strokeStyle = '#2a2a2a'; x.lineWidth = 2;
-  for (let i = 0; i < 14; i++) {
-    x.beginPath();
-    x.moveTo(40 + i * 42, 40); x.lineTo(40 + i * 42, 400);
-    x.stroke();
+const SAMPLES = {
+  board: {
+    label: 'Circuit board',
+    hint: 'A component running far too hot',
+    cal: [{ x: 196, y: 154, t: 84 }, { x: 40, y: 415, t: 22 }],
+    draw(x) {
+      x.fillStyle = '#1e1e1e'; x.fillRect(0, 0, SW, SH);
+      x.strokeStyle = '#2a2a2a'; x.lineWidth = 2;
+      for (let i = 0; i < 14; i++) {
+        x.beginPath(); x.moveTo(40 + i * 42, 40); x.lineTo(40 + i * 42, 400); x.stroke();
+      }
+      additive(x, () => {
+        heat(x, 196, 154, 108, 1.00);   // the failing component
+        heat(x, 432, 250,  88, 0.66);   // a warm regulator
+        heat(x, 320, 356,  66, 0.40);
+        heat(x, 540, 118,  52, 0.26);
+        heat(x,  96, 330,  44, 0.20);
+      });
+    }
+  },
+
+  panel: {
+    label: 'Fuse box',
+    hint: 'One breaker overloading',
+    cal: [{ x: 320, y: 140, t: 78 }, { x: 30, y: 420, t: 24 }],
+    draw(x) {
+      x.fillStyle = '#151515'; x.fillRect(0, 0, SW, SH);
+      x.fillStyle = '#242424'; x.fillRect(60, 40, SW - 120, SH - 80);
+      x.strokeStyle = '#3a3a3a'; x.lineWidth = 3; x.strokeRect(60, 40, SW - 120, SH - 80);
+
+      x.fillStyle = '#4a4a4a';                       // two rows of breakers
+      for (let r = 0; r < 2; r++)
+        for (let i = 0; i < 8; i++) x.fillRect(96 + i * 56, r === 0 ? 92 : 250, 40, 96);
+
+      x.fillStyle = '#383838'; x.fillRect(84, 206, SW - 168, 26);   // busbar
+
+      additive(x, () => {
+        heat(x, 320, 140, 94, 1.00);   // the overloaded breaker
+        heat(x, 320, 219, 62, 0.42);   // heat bleeding into the busbar
+        heat(x, 152, 298, 46, 0.20);
+        heat(x, 488, 300, 40, 0.14);
+      });
+    }
+  },
+
+  wall: {
+    label: 'Cold wall',
+    hint: 'Missing insulation in a stud bay',
+    cal: [{ x: 540, y: 250, t: 19.5 }, { x: 320, y: 235, t: 9 }],
+    draw(x) {
+      const g = x.createLinearGradient(0, 0, 0, SH);
+      g.addColorStop(0, '#8e8e8e'); g.addColorStop(1, '#787878');
+      x.fillStyle = g; x.fillRect(0, 0, SW, SH);
+
+      const cold = x.createLinearGradient(248, 0, 392, 0);   // the uninsulated bay
+      cold.addColorStop(0, 'rgba(0,0,0,0)');
+      cold.addColorStop(0.5, 'rgba(0,0,0,.64)');
+      cold.addColorStop(1, 'rgba(0,0,0,0)');
+      x.fillStyle = cold; x.fillRect(248, 0, 144, SH);
+
+      const top = x.createLinearGradient(0, 0, 0, 76);        // cold bridge at the ceiling
+      top.addColorStop(0, 'rgba(0,0,0,.52)'); top.addColorStop(1, 'rgba(0,0,0,0)');
+      x.fillStyle = top; x.fillRect(0, 0, SW, 76);
+
+      additive(x, () => heat(x, 108, SH - 60, 96, 0.28));     // a radiator below frame
+    }
+  },
+
+  motor: {
+    label: 'Motor bearing',
+    hint: 'A bearing about to fail',
+    cal: [{ x: 468, y: 235, t: 96 }, { x: 30, y: 40, t: 26 }],
+    draw(x) {
+      x.fillStyle = '#1a1a1a'; x.fillRect(0, 0, SW, SH);
+      x.fillStyle = '#333';    x.fillRect(90, 330, 460, 58);    // mounting base
+      x.fillStyle = '#5a5a5a'; x.fillRect(140, 140, 300, 190);  // motor body
+      x.strokeStyle = '#6b6b6b'; x.lineWidth = 4;               // cooling fins
+      for (let i = 0; i < 9; i++) {
+        x.beginPath(); x.moveTo(160 + i * 32, 146); x.lineTo(160 + i * 32, 324); x.stroke();
+      }
+      x.fillStyle = '#4e4e4e'; x.fillRect(440, 196, 58, 78);    // bearing housing
+      x.fillStyle = '#6a6a6a'; x.fillRect(498, 224, 72, 22);    // shaft
+
+      additive(x, () => {
+        heat(x, 468, 235,  86, 1.00);   // the failing bearing
+        heat(x, 300, 240, 140, 0.40);   // body at normal running temperature
+        heat(x, 180, 300,  60, 0.15);
+      });
+    }
   }
+};
 
-  const blob = (cx, cy, r, peak) => {
-    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
-    g.addColorStop(0, `rgba(255,255,255,${peak})`);
-    g.addColorStop(0.35, `rgba(210,210,210,${peak * 0.6})`);
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    x.fillStyle = g;
-    x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fill();
-  };
+// Render one sample to an off-screen canvas.
+function renderSample(key, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w || SW; c.height = h || SH;
+  const x = c.getContext('2d');
+  if (w && w !== SW) {                       // thumbnail: draw full size, then scale
+    const full = renderSample(key);
+    x.drawImage(full, 0, 0, c.width, c.height);
+  } else {
+    SAMPLES[key].draw(x);
+  }
+  return c;
+}
 
-  x.globalCompositeOperation = 'lighter';
-  blob(196, 154, 108, 1.00);   // the failing component — hottest
-  blob(432, 250, 88, 0.66);    // a warm regulator
-  blob(320, 356, 66, 0.40);    // mild warmth
-  blob(540, 118, 52, 0.26);
-  blob(96,  330, 44, 0.20);
-  x.globalCompositeOperation = 'source-over';
-
-  loadImage(c.toDataURL('image/png')).then(() => {
-    // Pre-seed two believable calibration points so it works out of the box
-    S.points = [
-      { x: 196, y: 154, t: 84.0 },   // hot component
-      { x: 40,  y: 415, t: 22.0 }    // cool board corner
-    ].filter(p => p.x < S.w && p.y < S.h);
+function loadSample(key) {
+  const s = SAMPLES[key];
+  if (!s) return;
+  loadImage(renderSample(key).toDataURL('image/png')).then(() => {
+    S.points = s.cal.filter(p => p.x < S.w && p.y < S.h).map(p => ({ ...p }));
     refreshCalList(); updateButtons(); draw();
-    toast('Sample loaded with 2 calibration points — press "Build temperature map"');
+    toast(`${s.label} loaded with ${S.points.length} calibration points — press "Build temperature map"`);
   });
+}
+
+function buildGallery() {
+  const el = $('samples');
+  el.innerHTML = '';
+  for (const [key, s] of Object.entries(SAMPLES)) {
+    const card = document.createElement('button');
+    card.type = 'button'; card.className = 'sample'; card.draggable = true;
+    card.title = `${s.label} — ${s.hint}`;
+    card.appendChild(renderSample(key, 210, 144));
+
+    const cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = s.label;
+    const sub = document.createElement('div'); sub.className = 'sub'; sub.textContent = s.hint;
+    card.append(cap, sub);
+
+    card.addEventListener('click', () => loadSample(key));
+    card.addEventListener('dragstart', e => {
+      e.dataTransfer.setData(SAMPLE_MIME, key);
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    el.appendChild(card);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -712,10 +843,16 @@ function readFile(f) {
   $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
 ['dragleave', 'drop'].forEach(ev =>
   $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
-$('drop').addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+$('drop').addEventListener('drop', e => {
+  // A card dragged out of the gallery carries our own MIME type; a real
+  // file dragged in from the desktop arrives in .files instead.
+  const key = e.dataTransfer.getData(SAMPLE_MIME);
+  if (key && SAMPLES[key]) { loadSample(key); return; }
+  const f = e.dataTransfer.files[0];
+  if (f) readFile(f);
+});
 
 // ---- buttons & sliders ----
-$('sample').onclick   = sampleImage;
 $('build').onclick    = buildMap;
 $('clearCal').onclick = () => { S.points = []; refreshCalList(); updateButtons(); draw(); };
 
@@ -768,6 +905,7 @@ $('dlCsv').onclick = () => {
 };
 
 $('grad').style.background = paletteCss('inferno');
+buildGallery();
 })();
 </script>
 </body>
